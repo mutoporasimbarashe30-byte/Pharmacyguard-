@@ -1,0 +1,6 @@
+{
+  "name": "PharmAlert - Medicine Expiry & Inventory Reminders",
+  "description": "Smart pharmacy expiry tracking dashboard with 90, 60, and 30-day early alert thresholds, FEFO prioritization, and AI clinical inventory reasoning.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
