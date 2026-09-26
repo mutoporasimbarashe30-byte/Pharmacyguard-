@@ -111,3 +111,31 @@ export interface QuarantineRecord {
   witnessPharmacist: string;
   notes?: string;
 }
+
+export type SubscriptionPlanId = 'free_trial' | 'monthly_5' | 'yearly_70';
+export type SubscriptionStatus = 'unsubscribed' | 'trial_active' | 'trial_expired' | 'active';
+
+export interface EcoCashPendingPayment {
+  status: 'pending' | 'approved';
+  ecocashNumber: string;
+  transactionId: string;
+  txId: string;
+  amount: string;
+  submittedAt: string;
+  approvedAt?: string;
+  expiryDays?: 30 | 365;
+  expiresAt?: string;
+}
+
+export interface SubscriptionState {
+  status: SubscriptionStatus;
+  planId?: SubscriptionPlanId;
+  startedAt?: string;
+  expiresAt?: string;
+  trialUsed: boolean;
+  paymentPhoneNumber: string;
+  lastTransactionRef?: string;
+  payerPhone?: string;
+  amountPaid?: number;
+}
+

@@ -9,26 +9,73 @@ import { QuarantineView } from './components/QuarantineView';
 import { AiThinkingPharmacist } from './components/AiThinkingPharmacist';
 import { PrintReportModal } from './components/PrintReportModal';
 import { BarcodeReminderScannerModal } from './components/BarcodeReminderScannerModal';
+import { SubscriptionWallModal } from './components/SubscriptionWallModal';
 import { INITIAL_MEDICINES } from './data/initialMedicines';
-import { Medicine, ExpiryTier } from './types/pharmacy';
+import { Medicine, ExpiryTier, SubscriptionState, EcoCashPendingPayment } from './types/pharmacy';
 import { calculateAuditMetrics, exportToCSV, analyzeExpiry, formatCurrency, getTierBadgeStyle } from './utils/expiryUtils';
 import { 
   Sparkles, 
   Plus, 
   FileText, 
   ArrowRight, 
-  ShieldAlert, 
   Clock, 
-  AlertTriangle, 
-  Pill, 
   CheckCircle2, 
-  BarChart3,
-  TrendingDown,
-  Activity,
-  Barcode
+  Barcode,
+  CreditCard,
+  Lock,
+  PhoneCall,
+  ShieldCheck,
+  ShieldAlert
 } from 'lucide-react';
 
 const STORAGE_KEY = 'pharmalert_inventory_v1';
+const SUBSCRIPTION_STORAGE_KEY = 'pharmalert_subscription_v1';
+const PENDING_STORAGE_KEY = 'pharmalert_pending';
+const IS_PRO_STORAGE_KEY = 'pharmalert_isPro';
+const EXPIRY_STORAGE_KEY = 'pharmalert_expiry';
+const PAYMENT_PHONE_NUMBER = '0779520831';
+
+function parsePendingStorage(): EcoCashPendingPayment | null {
+  try {
+    const raw = localStorage.getItem(PENDING_STORAGE_KEY);
+    if (!raw) return null;
+    if (raw === 'pending') {
+      return {
+        status: 'pending',
+        ecocashNumber: '0770000000',
+        transactionId: 'PENDING-TX',
+        txId: 'PENDING-TX',
+        amount: '5',
+        submittedAt: new Date().toISOString(),
+      };
+    }
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      return {
+        status: parsed.status || 'pending',
+        ecocashNumber: parsed.ecocashNumber || '',
+        transactionId: parsed.transactionId || parsed.txId || '',
+        txId: parsed.txId || parsed.transactionId || '',
+        amount: String(parsed.amount || '5'),
+        submittedAt: parsed.submittedAt || new Date().toISOString(),
+        approvedAt: parsed.approvedAt,
+        expiryDays: parsed.expiryDays,
+        expiresAt: parsed.expiresAt,
+      };
+    }
+  } catch (e) {
+    console.error('Failed to parse pharmalert_pending:', e);
+  }
+  return null;
+}
+
+function detectAdminBelam(): boolean {
+  if (typeof window === 'undefined') return false;
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('admin') === 'belam') return true;
+  if (window.location.href.includes('admin=belam')) return true;
+  return false;
+}
 
 export default function App() {
   const [medicines, setMedicines] = useState<Medicine[]>(() => {
@@ -55,6 +102,98 @@ export default function App() {
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
   const [isBarcodeModalOpen, setIsBarcodeModalOpen] = useState(false);
   const [scannedBarcode, setScannedBarcode] = useState<string>('');
+  const [isSubscriptionModalOpen, setIsSubscriptionModalOpen] = useState<boolean>(() => {
+    try {
+      if (detectAdminBelam()) return false;
+      if (localStorage.getItem(IS_PRO_STORAGE_KEY) === 'true') return false;
+      const savedSub = localStorage.getItem(SUBSCRIPTION_STORAGE_KEY);
+      if (savedSub) {
+        const parsed: SubscriptionState = JSON.parse(savedSub);
+        const notExpired = !parsed.expiresAt || new Date(parsed.expiresAt).getTime() >= Date.now();
+        if ((parsed.status === 'active' || parsed.status === 'trial_active') && notExpired) {
+          return false;
+        }
+      }
+    } catch {
+      // Ignore storage errors
+    }
+    return true;
+  });
+
+  const [isPro, setIsPro] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(IS_PRO_STORAGE_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const [pendingPayment, setPendingPayment] = useState<EcoCashPendingPayment | null>(() =>
+    parsePendingStorage()
+  );
+
+  const [isAdminBelam, setIsAdminBelam] = useState<boolean>(() => detectAdminBelam());
+  const [adminExpiryChoice, setAdminExpiryChoice] = useState<30 | 365>(() => {
+    const initialPending = parsePendingStorage();
+    if (initialPending?.amount && initialPending.amount.replace(/^\$/, '').trim() === '70') {
+      return 365;
+    }
+    return 30;
+  });
+
+  const [subscription, setSubscription] = useState<SubscriptionState>(() => {
+    try {
+      const proFlag = localStorage.getItem(IS_PRO_STORAGE_KEY) === 'true';
+      const savedExpiry = localStorage.getItem(EXPIRY_STORAGE_KEY);
+      const savedSub = localStorage.getItem(SUBSCRIPTION_STORAGE_KEY);
+      if (proFlag) {
+        const expDate = savedExpiry
+          ? savedExpiry.split('T')[0]
+          : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+        return {
+          status: 'active',
+          planId: 'monthly_5',
+          startedAt: new Date().toISOString().split('T')[0],
+          expiresAt: expDate,
+          trialUsed: true,
+          paymentPhoneNumber: PAYMENT_PHONE_NUMBER,
+        };
+      }
+      if (savedSub) {
+        const parsed: SubscriptionState = JSON.parse(savedSub);
+        if (parsed.expiresAt && new Date(parsed.expiresAt).getTime() < Date.now()) {
+          return {
+            ...parsed,
+            status: parsed.planId === 'free_trial' ? 'trial_expired' : 'unsubscribed',
+            paymentPhoneNumber: PAYMENT_PHONE_NUMBER,
+          };
+        }
+        return {
+          ...parsed,
+          paymentPhoneNumber: PAYMENT_PHONE_NUMBER,
+        };
+      }
+    } catch (e) {
+      console.error('Failed to load subscription:', e);
+    }
+    return {
+      status: 'unsubscribed',
+      trialUsed: false,
+      paymentPhoneNumber: PAYMENT_PHONE_NUMBER,
+    };
+  });
+
+  useEffect(() => {
+    const onUrlChange = () => {
+      setIsAdminBelam(detectAdminBelam());
+    };
+    window.addEventListener('popstate', onUrlChange);
+    window.addEventListener('hashchange', onUrlChange);
+    return () => {
+      window.removeEventListener('popstate', onUrlChange);
+      window.removeEventListener('hashchange', onUrlChange);
+    };
+  }, []);
 
   // Sync to local storage
   useEffect(() => {
@@ -64,6 +203,134 @@ export default function App() {
       console.error('Failed to save to local storage:', e);
     }
   }, [medicines]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SUBSCRIPTION_STORAGE_KEY, JSON.stringify(subscription));
+    } catch (e) {
+      console.error('Failed to save subscription to local storage:', e);
+    }
+  }, [subscription]);
+
+  const handleStartFreeTrial = () => {
+    const now = new Date();
+    const expires = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    setSubscription({
+      status: 'trial_active',
+      planId: 'free_trial',
+      startedAt: now.toISOString().split('T')[0],
+      expiresAt: expires.toISOString().split('T')[0],
+      trialUsed: true,
+      paymentPhoneNumber: PAYMENT_PHONE_NUMBER,
+    });
+    setIsSubscriptionModalOpen(false);
+  };
+
+  const handleVerifyEcoCash = (
+    ecocashNumber: string,
+    transactionId: string,
+    amount: string
+  ) => {
+    const record: EcoCashPendingPayment = {
+      status: 'pending',
+      ecocashNumber,
+      transactionId,
+      txId: transactionId,
+      amount,
+      submittedAt: new Date().toISOString(),
+    };
+    try {
+      localStorage.setItem(PENDING_STORAGE_KEY, JSON.stringify(record));
+    } catch (e) {
+      console.error('Failed to save pharmalert_pending:', e);
+    }
+    setPendingPayment(record);
+    const cleanAmt = amount.replace(/^\$/, '').trim();
+    setAdminExpiryChoice(cleanAmt === '70' ? 365 : 30);
+  };
+
+  const handleApprovePending = (overrideDays?: 30 | 365) => {
+    const cleanAmt = pendingPayment?.amount?.replace(/^\$/, '').trim();
+    const days: 30 | 365 =
+      overrideDays || (cleanAmt === '70' ? 365 : adminExpiryChoice || 30);
+    const now = new Date();
+    const expires = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
+    const expiresIso = expires.toISOString();
+    const expiresShort = expiresIso.split('T')[0];
+
+    try {
+      localStorage.setItem(IS_PRO_STORAGE_KEY, 'true');
+      localStorage.setItem(EXPIRY_STORAGE_KEY, expiresIso);
+      localStorage.setItem('pharmalert_expiryDays', String(days));
+
+      const updatedPending: EcoCashPendingPayment = {
+        status: 'approved',
+        ecocashNumber: pendingPayment?.ecocashNumber || '0779520831',
+        transactionId: pendingPayment?.transactionId || 'APPROVED-BY-BELAM',
+        txId: pendingPayment?.txId || pendingPayment?.transactionId || 'APPROVED-BY-BELAM',
+        amount: pendingPayment?.amount || (days === 365 ? '70' : '5'),
+        submittedAt: pendingPayment?.submittedAt || now.toISOString(),
+        approvedAt: now.toISOString(),
+        expiryDays: days,
+        expiresAt: expiresShort,
+      };
+      localStorage.setItem(PENDING_STORAGE_KEY, JSON.stringify(updatedPending));
+      setPendingPayment(updatedPending);
+    } catch (e) {
+      console.error('Failed to approve subscription in localStorage:', e);
+    }
+
+    setIsPro(true);
+    setSubscription({
+      status: 'active',
+      planId: days === 365 ? 'yearly_70' : 'monthly_5',
+      startedAt: now.toISOString().split('T')[0],
+      expiresAt: expiresShort,
+      trialUsed: true,
+      paymentPhoneNumber: PAYMENT_PHONE_NUMBER,
+      lastTransactionRef: pendingPayment?.transactionId || 'ECOCASH-PRO',
+      payerPhone: pendingPayment?.ecocashNumber || '',
+      amountPaid: days === 365 ? 70 : 5,
+    });
+    setIsSubscriptionModalOpen(false);
+  };
+
+  const handleOpenAdminBelam = () => {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('admin', 'belam');
+      window.history.pushState({}, '', url.toString());
+    } catch {
+      // Fallback if history pushState is restricted
+    }
+    setIsAdminBelam(true);
+    setIsSubscriptionModalOpen(false);
+  };
+
+  const handleExitAdminBelam = () => {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('admin');
+      window.history.pushState({}, '', url.toString());
+    } catch {
+      // Ignore
+    }
+    setIsAdminBelam(false);
+  };
+
+  const handleSimulateLockWall = (mode: 'unsubscribed' | 'trial_expired') => {
+    try {
+      localStorage.removeItem(IS_PRO_STORAGE_KEY);
+    } catch {
+      // Ignore
+    }
+    setIsPro(false);
+    setSubscription((prev) => ({
+      ...prev,
+      status: mode,
+    }));
+    setIsSubscriptionModalOpen(true);
+  };
 
   // Compute live metrics
   const auditMetrics = calculateAuditMetrics(medicines);
@@ -95,9 +362,7 @@ export default function App() {
   };
 
   const handleDeleteMedicine = (id: string) => {
-    if (window.confirm('Are you sure you want to delete this medicine batch record?')) {
-      setMedicines((prev) => prev.filter((m) => m.id !== id));
-    }
+    setMedicines((prev) => prev.filter((m) => m.id !== id));
   };
 
   const handleDispense = (id: string, amount: number) => {
@@ -192,7 +457,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col font-sans transition-colors">
+    <div className="dark min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans transition-colors">
       
       {/* Top Navigation */}
       <TopNav
@@ -205,11 +470,221 @@ export default function App() {
         onExportCSV={handleExportCSV}
         onOpenPrintReport={() => setIsPrintModalOpen(true)}
         onOpenBarcodeScanner={() => handleOpenBarcodeScanner()}
+        onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
+        subscription={subscription}
+        isPro={isPro}
         criticalCount={auditMetrics.criticalCount}
       />
 
       {/* Main Viewport */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        
+        {/* ADMIN VIEW (?admin=belam) */}
+        {isAdminBelam && (
+          <div className="mb-6 p-6 rounded-2xl bg-slate-900 border-2 border-teal-500/80 shadow-2xl space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800">
+              <div>
+                <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-teal-400">
+                  <ShieldCheck className="w-4 h-4" />
+                  <span>Admin Portal (?admin=belam)</span>
+                </div>
+                <h2 className="text-xl sm:text-2xl font-bold text-white mt-1">
+                  EcoCash Pending Payment Verification
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Review <code className="font-mono text-amber-300">pharmalert_pending</code> submissions for EcoCash <strong className="font-mono text-white">{PAYMENT_PHONE_NUMBER}</strong> and click <strong className="text-teal-400">Approve</strong> to set <code className="font-mono text-emerald-300">pharmalert_isPro=true</code> with 30 or 365 days expiry.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-xs font-mono text-slate-300">
+                  pharmalert_isPro: <strong className={isPro ? 'text-emerald-400' : 'text-amber-400'}>{String(isPro)}</strong>
+                </span>
+                <button
+                  type="button"
+                  onClick={handleExitAdminBelam}
+                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 transition-colors cursor-pointer"
+                >
+                  Exit Admin
+                </button>
+              </div>
+            </div>
+
+            {/* Pending Payment Card */}
+            <div className="p-5 rounded-xl bg-slate-950 border border-slate-800 flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
+                  <span className="text-slate-400">Status:</span>
+                  <span
+                    className={`font-bold uppercase ${
+                      pendingPayment?.status === 'approved'
+                        ? 'text-emerald-400'
+                        : 'text-amber-400'
+                    }`}
+                  >
+                    {pendingPayment ? pendingPayment.status : 'pending (no submission yet)'}
+                  </span>
+                  <span aria-hidden="true" className="text-slate-600">·</span>
+                  <span className="text-slate-400">
+                    Storage Key: <code className="text-teal-300">pharmalert_pending</code>
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-1">
+                  <div className="p-3 rounded-lg bg-slate-900 border border-slate-800">
+                    <span className="block text-[11px] text-slate-400">Your EcoCash Number</span>
+                    <span className="font-mono text-sm font-bold text-white">
+                      {pendingPayment?.ecocashNumber || '—'}
+                    </span>
+                  </div>
+                  <div className="p-3 rounded-lg bg-slate-900 border border-slate-800">
+                    <span className="block text-[11px] text-slate-400">Transaction ID (TxID)</span>
+                    <span className="font-mono text-sm font-bold text-amber-300">
+                      {pendingPayment?.transactionId || '—'}
+                    </span>
+                  </div>
+                  <div className="p-3 rounded-lg bg-slate-900 border border-slate-800">
+                    <span className="block text-[11px] text-slate-400">Amount</span>
+                    <span className="font-mono text-sm font-bold text-emerald-400">
+                      {pendingPayment?.amount ? `$${pendingPayment.amount.replace(/^\$/, '')}` : '$5 / $70'}
+                    </span>
+                  </div>
+                </div>
+
+                {isPro && subscription.expiresAt && (
+                  <p className="text-xs font-mono text-emerald-400 pt-1">
+                    Approved! pharmalert_isPro=true · Expiry set to {subscription.expiresAt} ({pendingPayment?.expiryDays || adminExpiryChoice} days)
+                  </p>
+                )}
+              </div>
+
+              {/* Expiry Selector (30 or 365 days) & Approve Button */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 shrink-0">
+                <div className="flex items-center gap-1 p-1 bg-slate-900 border border-slate-800 rounded-xl">
+                  <button
+                    type="button"
+                    onClick={() => setAdminExpiryChoice(30)}
+                    className={`px-3 py-2 rounded-lg text-xs font-mono font-semibold transition-colors cursor-pointer ${
+                      adminExpiryChoice === 30
+                        ? 'bg-teal-600 text-white'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    30 Days ($5)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAdminExpiryChoice(365)}
+                    className={`px-3 py-2 rounded-lg text-xs font-mono font-semibold transition-colors cursor-pointer ${
+                      adminExpiryChoice === 365
+                        ? 'bg-teal-600 text-white'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    365 Days ($70)
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => handleApprovePending(adminExpiryChoice)}
+                  className="px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm shadow-lg transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Approve</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Subscription & EcoCash Status Strip */}
+        <div
+          className={`mb-5 p-3.5 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+            isPro || subscription.status === 'active'
+              ? 'bg-emerald-950/30 border-emerald-800/70'
+              : pendingPayment?.status === 'pending'
+              ? 'bg-amber-950/40 border-amber-700/80'
+              : subscription.status === 'trial_active'
+              ? 'bg-amber-950/30 border-amber-800/70'
+              : 'bg-red-950/40 border-red-800'
+          }`}
+        >
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <CreditCard className="w-4 h-4 text-teal-400 shrink-0" />
+            {isPro || subscription.status === 'active' ? (
+              <span className="font-semibold text-white">
+                PharmAlert Pro Active:{' '}
+                <strong className="font-mono text-emerald-400">
+                  {subscription.planId === 'yearly_70' ? '365-Day Yearly Plan ($70/yr)' : '30-Day Monthly Plan ($5/mo)'}
+                </strong>
+                <span aria-hidden="true" className="mx-1.5">·</span>
+                <span className="text-slate-300 font-mono">
+                  EcoCash {PAYMENT_PHONE_NUMBER} (Expires {subscription.expiresAt})
+                </span>
+              </span>
+            ) : pendingPayment?.status === 'pending' ? (
+              <span className="font-semibold text-amber-200">
+                EcoCash Payment Pending Verification:{' '}
+                <strong className="font-mono text-white">TxID {pendingPayment.transactionId}</strong>
+                <span aria-hidden="true" className="mx-1.5">·</span>
+                <span className="font-mono text-amber-300">
+                  Amount: ${pendingPayment.amount.replace(/^\$/, '')} sent to {PAYMENT_PHONE_NUMBER}
+                </span>
+              </span>
+            ) : subscription.status === 'trial_active' ? (
+              <span className="font-semibold text-white">
+                <strong className="text-amber-300">1-Month Free Trial Active</strong>
+                <span aria-hidden="true" className="mx-1.5">·</span>
+                <span className="text-slate-300">
+                  Send <strong className="font-mono">$5 monthly</strong> or <strong className="font-mono">$70 yearly</strong> to{' '}
+                  <strong className="font-mono text-amber-200 underline">
+                    EcoCash {PAYMENT_PHONE_NUMBER}
+                  </strong>
+                </span>
+              </span>
+            ) : (
+              <span className="font-semibold text-red-200">
+                Pay EcoCash <strong className="font-mono">{PAYMENT_PHONE_NUMBER}</strong>: Send <strong className="font-mono">$5 monthly</strong> or <strong className="font-mono">$70 yearly</strong> or activate <strong className="underline">1-Month Free Trial</strong>
+              </span>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setIsSubscriptionModalOpen(true)}
+              className="px-3 py-1.5 text-xs font-semibold text-white bg-teal-600 hover:bg-teal-500 rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+            >
+              <PhoneCall className="w-3.5 h-3.5" />
+              <span>Subscribe</span>
+            </button>
+
+            {isAdminBelam && (
+              <>
+                <button
+                  type="button"
+                  onClick={handleOpenAdminBelam}
+                  className="px-2.5 py-1.5 text-xs font-mono font-medium text-teal-300 bg-slate-900 border border-slate-700 hover:bg-slate-800 rounded-lg transition-colors flex items-center gap-1 whitespace-nowrap cursor-pointer"
+                  title="Open Admin View (?admin=belam)"
+                >
+                  <ShieldAlert className="w-3.5 h-3.5" />
+                  <span>?admin=belam</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleSimulateLockWall('unsubscribed')}
+                  className="px-2.5 py-1.5 text-xs font-medium text-red-300 bg-slate-900 border border-red-800/80 hover:bg-red-950/50 rounded-lg transition-colors flex items-center gap-1 whitespace-nowrap cursor-pointer"
+                  title="Trigger the unsubscribed EcoCash modal"
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>Paywall</span>
+                </button>
+              </>
+            )}
+          </div>
+        </div>
         
         {/* Daily Reminder Alert Banner */}
         <ReminderBanner
@@ -747,6 +1222,21 @@ export default function App() {
         onDispense={handleDispense}
         onQuarantine={handleQuarantine}
         onQuickRestock={handleQuickRestock}
+      />
+
+      {/* EcoCash Subscription & 1-Month Free Trial Modal */}
+      <SubscriptionWallModal
+        isOpen={isSubscriptionModalOpen}
+        subscription={subscription}
+        isPro={isPro}
+        isAdminBelam={isAdminBelam}
+        pendingPayment={pendingPayment}
+        onStartFreeTrial={handleStartFreeTrial}
+        onVerifyEcoCash={handleVerifyEcoCash}
+        onOpenAdminView={handleOpenAdminBelam}
+        onClose={() => {
+          setIsSubscriptionModalOpen(false);
+        }}
       />
 
     </div>

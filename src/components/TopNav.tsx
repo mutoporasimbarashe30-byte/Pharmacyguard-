@@ -1,6 +1,7 @@
 import React from 'react';
-import { Pill, Plus, Download, Sparkles, AlertTriangle, ShieldAlert, Barcode } from 'lucide-react';
+import { Pill, Plus, Download, Sparkles, ShieldAlert, Barcode, CreditCard } from 'lucide-react';
 import avatarImg from '../assets/images/avatar_pharmacist_1790233732970.jpg';
+import { SubscriptionState } from '../types/pharmacy';
 
 interface TopNavProps {
   activeTab: 'dashboard' | 'inventory' | 'action-center' | 'quarantine' | 'ai-consultant';
@@ -9,6 +10,9 @@ interface TopNavProps {
   onExportCSV: () => void;
   onOpenPrintReport: () => void;
   onOpenBarcodeScanner: () => void;
+  onOpenSubscriptionModal: () => void;
+  subscription: SubscriptionState;
+  isPro?: boolean;
   criticalCount: number;
 }
 
@@ -17,8 +21,10 @@ export const TopNav: React.FC<TopNavProps> = ({
   setActiveTab,
   onOpenAddModal,
   onExportCSV,
-  onOpenPrintReport,
   onOpenBarcodeScanner,
+  onOpenSubscriptionModal,
+  subscription,
+  isPro = false,
   criticalCount,
 }) => {
   return (
@@ -27,21 +33,13 @@ export const TopNav: React.FC<TopNavProps> = ({
         <div className="flex items-center justify-between h-16 gap-4">
           
           {/* Zone 1: Single text element wordmark */}
-          <div className="flex items-center gap-3 shrink-0">
-            <div className="w-10 h-10 rounded-lg bg-teal-600 dark:bg-teal-500 text-white flex items-center justify-center shadow-sm">
+          <div className="flex items-center gap-2.5 shrink-0">
+            <div className="w-9 h-9 rounded-lg bg-teal-600 dark:bg-teal-500 text-white flex items-center justify-center shadow-sm">
               <Pill className="w-5 h-5" />
             </div>
-            <div>
-              <span className="text-xl font-bold tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
-                PharmAlert
-                <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-mono">
-                  v2.6 Rx
-                </span>
-              </span>
-              <p className="text-xs text-slate-500 dark:text-slate-400 hidden sm:block">
-                St. Jude Community Pharmacy &amp; Drug Dispensary
-              </p>
-            </div>
+            <span className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">
+              PharmAlert
+            </span>
           </div>
 
           {/* Zone 2: Navigation Links */}
@@ -110,7 +108,26 @@ export const TopNav: React.FC<TopNavProps> = ({
           </nav>
 
           {/* Zone 3: Primary Actions and Pharmacist Profile */}
-          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
+            <button
+              onClick={onOpenSubscriptionModal}
+              title="Pay EcoCash 0779520831 ($5 monthly or $70 yearly)"
+              className={`px-3 py-2 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap border cursor-pointer ${
+                isPro || subscription.status === 'active'
+                  ? 'bg-emerald-950/70 hover:bg-emerald-900/80 text-emerald-200 border-emerald-700'
+                  : subscription.status === 'trial_active'
+                  ? 'bg-amber-950/70 hover:bg-amber-900/80 text-amber-200 border-amber-700'
+                  : 'bg-red-600 hover:bg-red-700 text-white border-red-700'
+              }`}
+            >
+              <CreditCard className="w-3.5 h-3.5 shrink-0" />
+              <span className="font-mono">
+                {isPro || subscription.status === 'active'
+                  ? 'Subscribe · Pro Active'
+                  : 'Subscribe'}
+              </span>
+            </button>
+
             <button
               onClick={onOpenBarcodeScanner}
               title="Scan packaging barcode for live expiry reminders"
